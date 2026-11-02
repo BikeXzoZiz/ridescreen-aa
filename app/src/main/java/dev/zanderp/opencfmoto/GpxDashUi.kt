@@ -52,6 +52,8 @@ class GpxDashUi(
     private val projected: Boolean = false,
 ) {
     private val main = Handler(Looper.getMainLooper())
+    /** How often the dash map re-checks the day/night split (see nightTick in setup). */
+    private val nightRecheckMs = 60_000L
     private var dash: DashMapEngine? = null
     private var voice: GpxVoice? = null
     /** Display cutout / system bar insets — applied to chrome margins, not the map (edge-to-edge). */
@@ -167,8 +169,10 @@ class GpxDashUi(
             lLimit.text = if (units == MapUnits.IMPERIAL) "LIMIT mph" else "LIMIT"
             root.findViewById<TextView>(R.id.gpx_chip_speed_unit)?.text = GpxNav.speedUnitLabel(units)
         }
+        var appliedNight = false
         fun applyMapTheme() {
-            dashLocal.applyTheme(NightPrefs.isNightNow(context))
+            appliedNight = NightPrefs.isNightNow(context)
+            dashLocal.applyTheme(appliedNight)
             dashLocal.setBuildings3d(buildings3d)
         }
         fun refreshTitle() {
@@ -225,6 +229,15 @@ class GpxDashUi(
         applyUnitLabels()
         refreshTitle()
         applyMapTheme()
+        // Re-check the day/night split every minute — a ride crossing sunset flips the dash map on
+        // its own, like the AA night-sensor loop does for Maps' own style. release() clears the
+        // pending tick with the rest of main's callbacks.
+        fun nightTick() {
+            if (released) return
+            if (NightPrefs.isNightNow(context) != appliedNight) applyMapTheme()
+            main.postDelayed(::nightTick, nightRecheckMs)
+        }
+        nightTick()
 
         fun applyRoadRoute(route: OsrmRouter.Route, name: String) {
             liveNav = GpxNav(OsrmRouter.toTrack(name, route), route.steps)
