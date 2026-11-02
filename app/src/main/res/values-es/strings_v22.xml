@@ -161,6 +161,9 @@
     <string name="dest_clear">Quitar</string>
     <string name="nav_app_title">Navegar con</string>
     <string name="nav_app_remember">Recordar mi elección</string>
+    <string name="nav_mode_moto">Modo motocicleta</string>
+    <string name="nav_mode_car">Modo coche</string>
+    <string name="nav_update_maps">Actualizar Google Maps</string>
     <string name="crash_sms_speed">Impacto a unos %1$d km/h.</string>
     <string name="bb_title">🎥 Caja negra</string>
     <string name="bb_settings_hint">Con el detector activo, el móvil guarda en memoria el último minuto de conducción (velocidad, frenada, inclinación, posición). Solo si detecta un impacto guarda ese minuto y los 30 s siguientes. Nada sale del móvil salvo que tú lo compartas.</string>

@@ -155,6 +155,9 @@
     <string name="dest_clear">Treu</string>
     <string name="nav_app_title">Navega amb</string>
     <string name="nav_app_remember">Recorda la meva elecció</string>
+    <string name="nav_mode_moto">Mode motocicleta</string>
+    <string name="nav_mode_car">Mode cotxe</string>
+    <string name="nav_update_maps">Actualitza Google Maps</string>
     <string name="crash_sms_speed">Impacte a uns %1$d km/h.</string>
     <string name="bb_title">🎥 Caixa negra</string>
     <string name="bb_settings_hint">Amb el detector actiu, el mòbil guarda en memòria l\'últim minut de conducció (velocitat, frenada, inclinació, posició). Només si detecta un impacte desa aquest minut i els 30 s següents. Res no surt del mòbil si tu no ho comparteixes.</string>

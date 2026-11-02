@@ -5,12 +5,15 @@ package dev.zanderp.opencfmoto
 import android.Manifest
 import android.content.ContentUris
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.provider.CalendarContract
 import android.text.InputType
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import com.google.android.material.button.MaterialButton
@@ -100,6 +103,10 @@ object QuickDestinations {
         }
         // Which app opens the route; tap to change it.
         chip("🧭 " + NavApps.label(activity), { NavApps.choose(activity) { again() } })
+        // Vehicle profile Maps starts navigation in; tap to switch.
+        chip(NavMode.chipLabel(activity), { NavMode.toggle(activity); again() })
+        // Maps updates only from the Play Store — send the rider straight to its page.
+        chip("⬆ " + activity.getString(R.string.nav_update_maps), { openMapsPlayStore(activity) })
         if (!hasCalendar(activity)) {
             chip("📅 " + activity.getString(R.string.dest_calendar), askCalendar)
         } else {
@@ -109,6 +116,20 @@ object QuickDestinations {
                 chip("📅 $title · ${fmt.format(Date(e.begin))}", { navigate(e.location) })
             }
         }
+    }
+
+    /** Send the rider to Google Maps' Play Store page — Maps updates only from there. */
+    private fun openMapsPlayStore(activity: AppCompatActivity) {
+        for (u in listOf(
+            "market://details?id=${NavApps.GOOGLE_PKG}",
+            "https://play.google.com/store/apps/details?id=${NavApps.GOOGLE_PKG}",
+        )) {
+            try {
+                activity.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(u)))
+                return
+            } catch (_: Exception) { /* try next */ }
+        }
+        Toast.makeText(activity, R.string.open_failed, Toast.LENGTH_SHORT).show()
     }
 
     /** Set or change Home / Work (an address or place name, whatever Maps understands) and who to tell. */

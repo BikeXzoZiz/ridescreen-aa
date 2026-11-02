@@ -154,6 +154,9 @@
     <string name="dest_clear">Rimuovi</string>
     <string name="nav_app_title">Naviga con</string>
     <string name="nav_app_remember">Ricorda la mia scelta</string>
+    <string name="nav_mode_moto">Modalità moto</string>
+    <string name="nav_mode_car">Modalità auto</string>
+    <string name="nav_update_maps">Aggiorna Google Maps</string>
     <string name="crash_sms_speed">Urto a circa %1$d km/h.</string>
     <string name="bb_title">🎥 Scatola nera</string>
     <string name="bb_settings_hint">Mentre il rilevatore è attivo, il telefono tiene in memoria l\'ultimo minuto di guida (velocità, frenate, inclinazione, posizione). Solo se rileva un urto salva quel minuto più i 30 s successivi. Nulla esce dal telefono se non lo condividi tu.</string>

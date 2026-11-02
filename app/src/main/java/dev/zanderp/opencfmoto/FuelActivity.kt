@@ -193,10 +193,8 @@ class FuelActivity : AppCompatActivity() {
 
     /** Google Maps turn-by-turn → Android Auto shows it on the dash. */
     private fun navigate(s: FuelStations.Station) {
-        val intents = listOf(
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=${s.lat},${s.lon}")).setPackage("com.google.android.apps.maps"),
-            Intent(Intent.ACTION_VIEW, Uri.parse("geo:${s.lat},${s.lon}?q=${s.lat},${s.lon}(${Uri.encode(s.brand)})")),
-        )
+        val coord = "${s.lat},${s.lon}"
+        val intents = NavLauncher.mapsIntents(this, coord, "$coord?q=$coord(${Uri.encode(s.brand)})")
         for (i in intents) {
             try { startActivity(i); return } catch (_: Exception) {}
         }

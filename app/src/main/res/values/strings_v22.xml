@@ -155,6 +155,9 @@
     <string name="dest_clear">Remove</string>
     <string name="nav_app_title">Navigate with</string>
     <string name="nav_app_remember">Remember my choice</string>
+    <string name="nav_mode_moto">Motorcycle mode</string>
+    <string name="nav_mode_car">Car mode</string>
+    <string name="nav_update_maps">Update Google Maps</string>
     <string name="crash_sms_speed">Impact at about %1$d km/h.</string>
     <string name="bb_title">🎥 Black box</string>
     <string name="bb_settings_hint">While the detector is on, the phone keeps the last minute of riding in memory (speed, braking, lean, position). Only if it detects an impact does it save that minute plus the 30 s after. Nothing leaves the phone unless you share it.</string>

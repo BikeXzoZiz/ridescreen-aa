@@ -52,21 +52,7 @@ object NavLauncher {
             if (startFirst(context, waze, "$dest (Waze)", log)) return true
             log("[NAV] Waze not available — falling back to Google Maps")
         }
-        val intents = listOf(
-            // Phone + AA: directions UI on the phone, navigate action also feeds Android Auto.
-            Intent(
-                Intent.ACTION_VIEW,
-                Uri.parse(
-                    "https://www.google.com/maps/dir/?api=1&destination=$enc" +
-                        "&travelmode=driving&dir_action=navigate",
-                ),
-            ).setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$enc&mode=d"))
-                .setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=$enc")).setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$enc")),
-        )
-        return startFirst(context, intents, dest, log)
+        return startFirst(context, mapsIntents(context, enc, "0,0?q=$enc"), dest, log)
     }
 
     /**
@@ -94,20 +80,39 @@ object NavLauncher {
             if (startFirst(context, waze, "${label ?: coord} (Waze)", log)) return true
             log("[NAV] Waze not available — falling back to Google Maps")
         }
-        val intents = listOf(
+        return startFirst(
+            context,
+            mapsIntents(context, coord, "$coord?q=$pin"),
+            label?.takeIf { it.isNotBlank() } ?: coord,
+            log,
+        )
+    }
+
+    /**
+     * Google Maps turn-by-turn intents for a destination, in the vehicle profile picked on the
+     * 🏍/🚗 chip ([NavMode]): two_wheeler / mode=l for motorcycle, driving / mode=d for car.
+     * [q] feeds the HTTPS dir link and google.navigation (already URI-encoded or bare coords);
+     * [geoQuery] is the geo: fallback's coordinate+query part. Also used directly by
+     * FuelActivity, which builds its own start loop.
+     */
+    fun mapsIntents(context: Context, q: String, geoQuery: String): List<Intent> {
+        val moto = NavMode.current(context) == NavMode.MOTO
+        val travelmode = if (moto) "two_wheeler" else "driving"
+        val gnavMode = if (moto) "l" else "d"
+        return listOf(
+            // Phone + AA: directions UI on the phone, navigate action also feeds Android Auto.
             Intent(
                 Intent.ACTION_VIEW,
                 Uri.parse(
-                    "https://www.google.com/maps/dir/?api=1&destination=$coord" +
-                        "&travelmode=driving&dir_action=navigate",
+                    "https://www.google.com/maps/dir/?api=1&destination=$q" +
+                        "&travelmode=$travelmode&dir_action=navigate",
                 ),
             ).setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$coord&mode=d"))
+            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q&mode=$gnavMode"))
                 .setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("geo:$coord?q=$pin")).setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$coord")),
+            Intent(Intent.ACTION_VIEW, Uri.parse("geo:$geoQuery")).setPackage(MAPS_PKG),
+            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q")),
         )
-        return startFirst(context, intents, label?.takeIf { it.isNotBlank() } ?: coord, log)
     }
 
     private fun startFirst(
