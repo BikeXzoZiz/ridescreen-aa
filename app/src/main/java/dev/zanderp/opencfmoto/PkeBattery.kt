@@ -49,11 +49,13 @@ object PkeBattery {
     private const val KEY_VOLTS = "volts"
     private const val KEY_LOCKED = "locked"
     private const val KEY_AT = "at"
+    private const val KEY_VOLTS_AT = "volts_at"
 
     /** The only two things RideScreen ever asks the box. */
     internal enum class Query(val cmd: String) { HANDSHAKE("008"), STATUS("001,7") }
 
-    data class Reading(val volts: Float?, val locked: Boolean?, val atMs: Long)
+    /** [voltsAtMs] is when the voltage itself was read: a later lock-state-only reading keeps it. */
+    data class Reading(val volts: Float?, val locked: Boolean?, val atMs: Long, val voltsAtMs: Long = atMs)
 
     enum class Failure { NO_CODE, NO_PERMISSION, BLUETOOTH_OFF, NOT_FOUND, NO_LINK, NO_ANSWER }
 
@@ -118,13 +120,13 @@ object PkeBattery {
         val at = p.getLong(KEY_AT, 0L).takeIf { it > 0 } ?: return null
         val v = p.getFloat(KEY_VOLTS, -1f).takeIf { it > 0 }
         val l = if (p.contains(KEY_LOCKED)) p.getBoolean(KEY_LOCKED, false) else null
-        return Reading(v, l, at)
+        return Reading(v, l, at, p.getLong(KEY_VOLTS_AT, at))
     }
 
     private fun save(ctx: Context, r: Reading) {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().apply {
             putLong(KEY_AT, r.atMs)
-            if (r.volts != null) putFloat(KEY_VOLTS, r.volts) else remove(KEY_VOLTS)
+            if (r.volts != null) putFloat(KEY_VOLTS, r.volts).putLong(KEY_VOLTS_AT, r.voltsAtMs) else remove(KEY_VOLTS).remove(KEY_VOLTS_AT)
             if (r.locked != null) putBoolean(KEY_LOCKED, r.locked) else remove(KEY_LOCKED)
         }.apply()
     }
@@ -155,6 +157,7 @@ object PkeBattery {
             if (volts == null && locked == null) return Result(null, Failure.NO_ANSWER)
             val r = Reading(volts, locked, System.currentTimeMillis())
             save(ctx, r)
+            volts?.let { noteVolts(it, verbose = true) }
             log("battery ${volts?.let { "%.1f V".format(it) } ?: "?"} · ${when (locked) { true -> "locked"; false -> "unlocked"; null -> "lock state ?" }}")
             return Result(r, null)
         } finally {
@@ -162,10 +165,12 @@ object PkeBattery {
         }
     }
 
-    private class Link(val gatt: BluetoothGatt, val rx: BluetoothGattCharacteristic, val replies: LinkedBlockingQueue<String>)
+    internal class Link(val gatt: BluetoothGatt, val rx: BluetoothGattCharacteristic, val replies: LinkedBlockingQueue<String>) {
+        @Volatile var dead = false
+    }
 
     /** Sends one allowed query and waits for the reply to it (other frames are logged and skipped). */
-    private fun ask(link: Link, pke: String, q: Query, timeoutMs: Long): String? {
+    private fun ask(link: Link, pke: String, q: Query, timeoutMs: Long, quiet: Boolean = false): String? {
         link.replies.clear()
         val bytes = frame(pke, q)
         val ok = if (Build.VERSION.SDK_INT >= 33) {
@@ -173,7 +178,7 @@ object PkeBattery {
         } else {
             @Suppress("DEPRECATION") run { link.rx.writeType = writeType(link.rx); link.rx.value = bytes; link.gatt.writeCharacteristic(link.rx) }
         }
-        log("→ ${masked(String(bytes, Charsets.US_ASCII), pke)}${if (ok) "" else " (write refused)"}")
+        if (!quiet || !ok) log("→ ${masked(String(bytes, Charsets.US_ASCII), pke)}${if (ok) "" else " (write refused)"}")
         val want = q.cmd.substringBefore(",")
         val until = System.currentTimeMillis() + timeoutMs
         while (true) {
@@ -215,7 +220,7 @@ object PkeBattery {
         return found
     }
 
-    private fun open(ctx: Context, dev: BluetoothDevice, pke: String, timeoutMs: Long): Link? {
+    private fun open(ctx: Context, dev: BluetoothDevice, pke: String, timeoutMs: Long, verbose: Boolean = true): Link? {
         val ready = CountDownLatch(1)
         val replies = LinkedBlockingQueue<String>()
         val text = StringBuilder()
@@ -225,8 +230,9 @@ object PkeBattery {
             override fun onConnectionStateChange(g: BluetoothGatt, status: Int, newState: Int) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     if (!g.requestMtu(185)) g.discoverServices()
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED && link == null) {
-                    fail = "disconnected (status=$status)"; ready.countDown()
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    if (link == null) { fail = "disconnected (status=$status)"; ready.countDown() }
+                    else { link?.dead = true; if (!verbose) log("live link dropped by the box (status=$status)") }
                 }
             }
             override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) { g.discoverServices() }
@@ -257,7 +263,7 @@ object PkeBattery {
                         if (start < 0 || end < 0) break
                         val f = text.substring(start, end + 1)
                         text.delete(0, end + 1)
-                        log("← ${masked(f, pke)}")
+                        if (verbose) log("← ${masked(f, pke)}")
                         replies.put(f)
                     }
                     if (text.length > 512) text.setLength(0)
@@ -273,5 +279,133 @@ object PkeBattery {
             return null
         }
         return l
+    }
+
+    // ── v2.4: live mode — ONE connection kept open while projecting, polling the voltage every couple
+    // of seconds. Same two read-only queries; the challenge is never answered.
+
+    // ── engine running, inferred from the voltage. Lives here, not in the Activity, so every reading
+    // (15 s card, live voltage, Help → Battery, widget) updates it (case 20261030: 14.7 V read, card
+    // still "stopped"). The charging system lifts the battery above ~13.2 V; once the engine stops it
+    // falls back below ~12.8 V. One charging reading turns it ON (a parked bike can't produce it);
+    // OFF takes two in a row so a load dip doesn't flicker it (one is enough while still unknown).
+
+    const val ENGINE_ON_V = 13.2f
+    const val ENGINE_OFF_V = 12.8f
+
+    internal data class Engine(val running: Boolean?, val hi: Int, val lo: Int)
+
+    internal fun nextEngine(e: Engine, v: Float): Engine {
+        val hi = if (v >= ENGINE_ON_V) e.hi + 1 else 0
+        val lo = if (v <= ENGINE_OFF_V) e.lo + 1 else 0
+        var running = e.running
+        if (hi >= 1) running = true
+        if (lo >= 2 || (lo >= 1 && running == null)) running = false
+        return Engine(running, hi, lo)
+    }
+
+    @Volatile private var engine = Engine(null, 0, 0)
+    val engineRunning: Boolean? get() = engine.running
+
+    /** Called on the thread that read the voltage; the Activity hops to the UI thread itself. */
+    @Volatile var onEngineChanged: (() -> Unit)? = null
+
+    @Synchronized
+    fun noteVolts(v: Float, verbose: Boolean = false) {
+        val before = engine.running
+        engine = nextEngine(engine, v)
+        if (engine.running != before) {
+            log("engine ${if (engine.running == true) "ON" else "OFF"} at ${"%.1f".format(v)} V")
+            onEngineChanged?.invoke()
+        } else if (verbose) {
+            log("engine still ${when (engine.running) { true -> "ON"; false -> "OFF"; null -> "unknown" }} at ${"%.1f".format(v)} V")
+        }
+    }
+
+    /** True / false from a live OBD RPM if there is one, else from a voltage read under 3 min ago, else null. */
+    fun engineState(ctx: Context): Boolean? {
+        // A live OBD reading (real RPM) beats guessing from the battery voltage.
+        ObdLive.engineRunning()?.let { return it }
+        val r = last(ctx) ?: return null
+        return if (System.currentTimeMillis() - r.voltsAtMs <= 3 * 60_000L) engine.running else null
+    }
+
+    // The box takes one client and stops advertising while it has one, so a command (PkeUnlock) can't
+    // even find it while the live link is open (case 20261029: four 'box not found' while projecting).
+    // [liveOpen] lets PkeUnlock see that link from outside the Activity; [wakeLive] cuts the live loop's
+    // pause short so it hands the box over at once; [awaitLiveClosed] waits for that.
+    private val liveSignal = java.lang.Object()
+
+    @Volatile var liveOpen = false
+        private set
+
+    fun wakeLive() = synchronized(liveSignal) { liveSignal.notifyAll() }
+
+    /** The live loop's pause between reads: up to [ms], ended early by [wakeLive] or when [stop] is true. */
+    fun livePause(ms: Long, stop: () -> Boolean) {
+        if (ms <= 0) return
+        synchronized(liveSignal) { if (!stop()) liveSignal.wait(ms) }
+    }
+
+    /** Waits up to [ms] for the live link to close. True if it is closed. */
+    fun awaitLiveClosed(ms: Long): Boolean {
+        val until = android.os.SystemClock.elapsedRealtime() + ms
+        synchronized(liveSignal) {
+            while (liveOpen) {
+                val left = until - android.os.SystemClock.elapsedRealtime()
+                if (left <= 0) return false
+                liveSignal.wait(left)
+            }
+        }
+        return true
+    }
+
+    /** Stores a lock state read by someone else (PkeUnlock's check after a command), like a normal reading. */
+    fun noteLocked(ctx: Context, locked: Boolean) {
+        val prev = last(ctx)
+        save(ctx, Reading(prev?.volts, locked, System.currentTimeMillis(), prev?.voltsAtMs ?: 0L))
+    }
+
+    class Live internal constructor(private val ctx: Context, private val pke: String, private val link: Link) {
+        val alive: Boolean get() = !link.dead
+        /** Voltage now (null if the box did not answer in 3 s). Saved like a normal reading. */
+        fun volts(): Float? {
+            val v = ask(link, pke, Query.HANDSHAKE, 3_000, quiet = true)?.let { voltsFrom(it) } ?: return null
+            save(ctx, Reading(v, last(ctx)?.locked, System.currentTimeMillis()))
+            noteVolts(v)
+            return v
+        }
+        /** Lock state (true locked / false unlocked / null unknown). */
+        fun locked(): Boolean? {
+            val l = ask(link, pke, Query.STATUS, 3_000, quiet = true)?.let { lockedFrom(it) } ?: return null
+            val prev = last(ctx)
+            save(ctx, Reading(prev?.volts, l, System.currentTimeMillis(), prev?.voltsAtMs ?: 0L))
+            return l
+        }
+        fun close() {
+            runCatching { link.gatt.disconnect() }; runCatching { link.gatt.close() }
+            synchronized(liveSignal) { liveOpen = false; liveSignal.notifyAll() }
+        }
+    }
+
+    /** Blocking. Opens the persistent link (known address first, else scan). Null if it cannot (reason in the log). */
+    fun openLive(ctx: Context): Live? {
+        val pke = code(ctx)
+        if (pke.length < 8) return null
+        if (Build.VERSION.SDK_INT >= 31 && listOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+                .any { ContextCompat.checkSelfPermission(ctx, it) != PackageManager.PERMISSION_GRANTED }) return null
+        val adapter = ctx.getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null || !adapter.isEnabled) return null
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val known = prefs.getString(KEY_MAC, null)?.let { runCatching { adapter.getRemoteDevice(it) }.getOrNull() }
+        var link = known?.let { open(ctx, it, pke, 8_000, verbose = false) }
+        if (link == null) {
+            val dev = scan(ctx, pke) ?: return null
+            prefs.edit().putString(KEY_MAC, dev.address).apply()
+            link = open(ctx, dev, pke, 12_000, verbose = false) ?: return null
+        }
+        liveOpen = true
+        log("live link open (read only: 008 + 001,7)")
+        return Live(ctx, pke, link)
     }
 }

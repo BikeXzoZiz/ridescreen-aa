@@ -105,6 +105,11 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".DashboardToggleActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.NoDisplay" />
+        <activity
             android:name=".QrScanActivity"
             android:exported="false" />
         <activity
@@ -271,6 +276,34 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/connect_widget_info" />
         </receiver>
+        <!-- v2.4 "Bike controls" strip: connect, unlock, lock, seat, fuel cap. -->
+        <receiver
+            android:name=".ControlWidget"
+            android:exported="false"
+            android:label="@string/widget_control_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/control_widget_info" />
+        </receiver>
+        <service
+            android:name=".PkeActionService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+        <activity
+            android:name=".PkeConfirmActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.OpenCfMoto.Dialog" />
+        <activity
+            android:name=".PkeMcuScanActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:taskAffinity=""
+            android:theme="@style/Theme.OpenCfMoto.Dialog" />
     </application>
 
 </manifest>

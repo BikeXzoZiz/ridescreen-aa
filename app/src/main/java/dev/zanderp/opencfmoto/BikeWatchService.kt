@@ -44,10 +44,24 @@ class BikeWatchService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Started with startForegroundService(): Android kills the whole app if we stop before calling
+        // startForeground() (Cloudflare, 31 Oct 2026: ForegroundServiceDidNotStartInTime in BikeWatchService
+        // on 2.3). So go foreground first, even on the paths that stop straight away.
+        ssid = BikeMemory.lastQr(this)?.ssid.orEmpty()
+        val promoted = try {
+            ServiceCompat.startForeground(
+                this, NOTIF_ID, notification(),
+                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0,
+            )
+            true
+        } catch (e: Exception) {
+            LogBus.log("[WATCH] can't run in the foreground: $e")
+            false
+        }
         if (intent?.action == ACTION_STOP) { stopNow("rider"); return START_NOT_STICKY }
         val newMode = runCatching { Mode.valueOf(intent?.getStringExtra(EXTRA_MODE) ?: "LONG") }.getOrDefault(Mode.LONG)
-        ssid = BikeMemory.lastQr(this)?.ssid.orEmpty()
-        if (ssid.isBlank()) { stopSelf(); return START_NOT_STICKY }
+        if (ssid.isBlank()) { stopNow("no saved bike"); return START_NOT_STICKY }
+        if (!promoted) { stopSelf(); return START_NOT_STICKY }
         val now = SystemClock.elapsedRealtime()
         if (running && mode == Mode.LONG && newMode == Mode.SHORT) {
             // The dash's Bluetooth just connected during the all-day LONG wait. That used to be
@@ -61,15 +75,6 @@ class BikeWatchService : Service() {
             mode = newMode
             until = now + if (mode == Mode.LONG) LONG_MAX_MS else SHORT_MAX_MS
             if (mode == Mode.LONG) longUntil = 0L
-        }
-        try {
-            ServiceCompat.startForeground(
-                this, NOTIF_ID, notification(),
-                if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE else 0,
-            )
-        } catch (e: Exception) {
-            LogBus.log("[WATCH] can't run in the foreground: $e")
-            stopSelf(); return START_NOT_STICKY
         }
         running = true
         instance = this
@@ -127,7 +132,12 @@ class BikeWatchService : Service() {
         }
     }
 
-    fun pokeNow() { h.removeCallbacks(check); h.post(check); if (mode == Mode.SHORT) startProbe() }
+    val inShortMode: Boolean get() = mode == Mode.SHORT
+
+    fun pokeNow() {
+        LogBus.log("[WATCH] poked (mode=$mode)")
+        h.removeCallbacks(check); h.post(check); if (mode == Mode.SHORT) startProbe()
+    }
 
     // ---- Background join (SHORT mode only)
     // Polling scan results doesn't work with the screen off: Android barely scans then, and the bike's
@@ -237,7 +247,10 @@ class BikeWatchService : Service() {
 
         /** @return false if Android wouldn't let us start (caller falls back to a direct launch). */
         fun start(ctx: Context, mode: Mode): Boolean {
-            if (running && mode == Mode.SHORT) { instance?.pokeNow(); return true }
+            // Only a burst already in SHORT can just be poked. A SHORT request during the LONG wait must
+            // reach onStartCommand, which switches LONG → SHORT (case 20261030: the dash's Bluetooth
+            // connected during the LONG wait and nothing was scanned).
+            if (running && mode == Mode.SHORT && instance?.inShortMode == true) { instance?.pokeNow(); return true }
             return try {
                 androidx.core.content.ContextCompat.startForegroundService(
                     ctx, Intent(ctx, BikeWatchService::class.java).putExtra(EXTRA_MODE, mode.name),

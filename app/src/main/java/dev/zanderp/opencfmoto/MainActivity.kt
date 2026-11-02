@@ -397,7 +397,7 @@ class MainActivity : AppCompatActivity() {
         if (thenStop && saved && live) {
             log("→ Park with photo: photo taken — saving the spot and disconnecting")
             Parking.saveNow(this)
-            stopEverything()
+            DashCards.farewell(this) { stopEverything() }
         } else if (thenStop && !saved) {
             log("→ Park with photo: no photo taken — staying connected")
         }
@@ -775,6 +775,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         AppSettings.applyToHolder(this)
+        DashboardMode.publishShortcut(this)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
@@ -873,7 +874,7 @@ class MainActivity : AppCompatActivity() {
                     log("→ Cancel tap ${since} ms after starting — ignored (lock ${CANCEL_LOCK_MS} ms)")
                     return@setOnClickListener
                 }
-                stopEverything()
+                DashCards.farewell(this) { stopEverything() }
                 return@setOnClickListener
             }
             if (DependencyPrompt.showForConnect(this, forScan = false)) {
@@ -887,6 +888,7 @@ class MainActivity : AppCompatActivity() {
                 ProjectionHolder.projection = null
                 GpxSession.clear()
                 ensureLocationPermission()
+                PkeUnlockUi.unlockWithConnect(applicationContext)
                 startAaFlow(saved)
             } else {
                 log("→ Connect: no saved bike — scan the dash QR.")
@@ -1031,6 +1033,9 @@ class MainActivity : AppCompatActivity() {
         statsHandler.removeCallbacks(todayTicker)
         statsHandler.removeCallbacks(husTicker)
         statsHandler.removeCallbacks(pkeTicker)
+        resumedNow = false
+        PkeBattery.onEngineChanged = null
+        LogBus.log("[UI] paused (live voltage stops)")
         CrashGuard.persistSession(this)
         super.onPause()
     }
@@ -1077,8 +1082,12 @@ class MainActivity : AppCompatActivity() {
         statsHandler.post(husTicker)
         statsHandler.removeCallbacks(pkeTicker)
         statsHandler.post(pkeTicker)
+        resumedNow = true
+        LogBus.log("[UI] resumed")
+        PkeBattery.onEngineChanged = { runOnUiThread { renderStatus(ConnectionState.phase, ConnectionState.detail); renderPkeCard() } }
+        maybeStartLive()
         // Engine state straight away from the last reading (if fresh), not after the next read.
-        if (engineRunning == null) PkeBattery.last(this)?.takeIf { System.currentTimeMillis() - it.atMs <= 3 * 60_000L }?.volts?.let { updateEngine(it) }
+        if (PkeBattery.engineRunning == null) PkeBattery.last(this)?.takeIf { System.currentTimeMillis() - it.voltsAtMs <= 3 * 60_000L }?.volts?.let { PkeBattery.noteVolts(it) }
         renderStatus(ConnectionState.phase, ConnectionState.detail)
         if (WifiGate.isWifiEnabled(this)) WifiGate.cancelNotification(this)
         // Retry auto-connect on resume: after finishing first-run setup, or once the bike's Wi-Fi
@@ -1134,6 +1143,7 @@ class MainActivity : AppCompatActivity() {
             log("→ widget tap: resuming the parked session")
             connectStartedAt = now
             AndroidAutoService.requestResume()
+            PkeUnlockUi.unlockWithConnect(applicationContext)
             Toast.makeText(this, R.string.widget_connect_starting, Toast.LENGTH_SHORT).show()
             return
         }
@@ -1147,6 +1157,7 @@ class MainActivity : AppCompatActivity() {
         ProjectionHolder.projection = null
         Toast.makeText(this, R.string.widget_connect_starting, Toast.LENGTH_SHORT).show()
         ensureLocationPermission()
+        PkeUnlockUi.unlockWithConnect(applicationContext)
         startAaFlow(saved)
     }
 
@@ -1431,14 +1442,17 @@ class MainActivity : AppCompatActivity() {
     private val tiles = HashMap<Int, Tile>()
 
     /** Icon bubble (soft colour per shortcut) + title + a live detail line, inside a HomeTile container. */
-    private fun buildTile(id: Int, emoji: String, color: Int, title: String, sub: String = "", big: Boolean = false) {
+    private fun buildTile(id: Int, icon: Int, color: Int, title: String, sub: String = "", big: Boolean = false) {
         val box = findViewById<android.widget.LinearLayout?>(id) ?: return
         box.removeAllViews()
         val dp = resources.displayMetrics.density
-        val bubble = TextView(this).apply {
-            text = emoji
-            textSize = if (big) 20f else 22f
-            gravity = android.view.Gravity.CENTER
+        // v2.4 line icon (vector, tinted with the tile's accent) in the tinted circle, same look as the widget.
+        val bubble = android.widget.ImageView(this).apply {
+            setImageResource(icon)
+            setColorFilter((color and 0x00FFFFFF) or 0xFF000000.toInt())
+            scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+            val pad = ((if (big) 10 else 11) * dp).toInt()
+            setPadding(pad, pad, pad, pad)
             background = android.graphics.drawable.GradientDrawable().apply {
                 shape = android.graphics.drawable.GradientDrawable.OVAL
                 setColor((color and 0x00FFFFFF) or 0x33000000)
@@ -1476,16 +1490,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupHomeTiles() {
-        buildTile(R.id.btn_trips_list, "🏍️", 0xFF5B8DEF.toInt(), getString(R.string.home_tile_trips))
-        buildTile(R.id.btn_fuel, "⛽", 0xFFE5774E.toInt(), getString(R.string.home_tile_fuel), getString(R.string.home_tile_fuel_sub))
-        buildTile(R.id.btn_maint, "🔧", 0xFF4FB6A6.toInt(), getString(R.string.home_tile_maint))
-        buildTile(R.id.btn_traffic_lights, "🚦", 0xFFE05A5A.toInt(), getString(R.string.home_tile_tl))
-        buildTile(R.id.btn_live, "📍", 0xFF5FD07A.toInt(), getString(R.string.home_tile_live))
-        buildTile(R.id.btn_help, "❓", 0xFFA98BE0.toInt(), getString(R.string.home_tile_help), getString(R.string.home_tile_help_sub))
-        buildTile(R.id.btn_park_photo, "📸", 0xFFD1A955.toInt(), getString(R.string.home_big_park), getString(R.string.home_big_park_sub), big = true)
-        buildTile(R.id.btn_controls, "🎮", 0xFF5B8DEF.toInt(), getString(R.string.controls_controls), getString(R.string.home_big_controls_sub), big = true)
-        buildTile(R.id.btn_hud_view, "🖥️", 0xFF4FB6A6.toInt(), getString(R.string.hud_dash_view), getString(R.string.home_big_hud_sub), big = true)
-        buildTile(R.id.btn_trip, "⏱️", 0xFF5FD07A.toInt(), getString(R.string.home_big_trip), getString(R.string.home_big_trip_sub), big = true)
+        buildTile(R.id.btn_trips_list, R.drawable.ic_line_trips, 0xFF5B8DEF.toInt(), getString(R.string.home_tile_trips))
+        buildTile(R.id.btn_fuel, R.drawable.ic_line_fuel, 0xFFE5774E.toInt(), getString(R.string.home_tile_fuel), getString(R.string.home_tile_fuel_sub))
+        buildTile(R.id.btn_maint, R.drawable.ic_line_maint, 0xFF4FB6A6.toInt(), getString(R.string.home_tile_maint))
+        buildTile(R.id.btn_traffic_lights, R.drawable.ic_line_traffic, 0xFFE05A5A.toInt(), getString(R.string.home_tile_tl))
+        buildTile(R.id.btn_live, R.drawable.ic_line_live, 0xFF5FD07A.toInt(), getString(R.string.home_tile_live))
+        buildTile(R.id.btn_help, R.drawable.ic_line_help, 0xFFA98BE0.toInt(), getString(R.string.home_tile_help), getString(R.string.home_tile_help_sub))
+        buildTile(R.id.btn_park_photo, R.drawable.ic_line_camera, 0xFFD1A955.toInt(), getString(R.string.home_big_park), getString(R.string.home_big_park_sub), big = true)
+        buildTile(R.id.btn_controls, R.drawable.ic_line_pad, 0xFF5B8DEF.toInt(), getString(R.string.controls_controls), getString(R.string.home_big_controls_sub), big = true)
+        buildTile(R.id.btn_hud_view, R.drawable.ic_line_dash, 0xFF4FB6A6.toInt(), getString(R.string.hud_dash_view), getString(R.string.home_big_hud_sub), big = true)
+        buildTile(R.id.btn_trip, R.drawable.ic_line_watch, 0xFF5FD07A.toInt(), getString(R.string.home_big_trip), getString(R.string.home_big_trip_sub), big = true)
         findViewById<View>(R.id.btn_traffic_lights)?.setOnClickListener { startActivity(Intent(this, TrafficLightsActivity::class.java)) }
         findViewById<View>(R.id.parked_walk)?.setOnClickListener {
             val spot = Parking.get(this) ?: return@setOnClickListener
@@ -1511,6 +1525,8 @@ class MainActivity : AppCompatActivity() {
         })
         add(getString(R.string.pax_entry) to { CompanionActivity.start(this@MainActivity); Unit })
         add(getString(R.string.pke_entry) to { PkeBatteryUi.show(this@MainActivity); Unit })
+        add(getString(R.string.pke_unlock_entry) to { PkeUnlockUi.show(this@MainActivity); Unit })
+        add(getString(R.string.obd_entry) to { ObdProbeUi.show(this@MainActivity); Unit })
         add(getString(R.string.help_support) to { Support.open(this@MainActivity); Unit })
     }
 
@@ -1554,8 +1570,8 @@ class MainActivity : AppCompatActivity() {
             else v.setPadding((6 * dp).toInt(), (14 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt())
         }
         style(liveTile, big); style(controls, !big)
-        buildTile(R.id.btn_live, "📍", 0xFF5FD07A.toInt(), getString(R.string.home_tile_live), big = big)
-        buildTile(R.id.btn_controls, "🎮", 0xFF5B8DEF.toInt(), getString(R.string.controls_controls),
+        buildTile(R.id.btn_live, R.drawable.ic_line_live, 0xFF5FD07A.toInt(), getString(R.string.home_tile_live), big = big)
+        buildTile(R.id.btn_controls, R.drawable.ic_line_pad, 0xFF5B8DEF.toInt(), getString(R.string.controls_controls),
             getString(R.string.home_big_controls_sub), big = !big)
         controls.setOnClickListener { startActivity(Intent(this, ControlsActivity::class.java)) }
         renderLive()
@@ -1584,36 +1600,13 @@ class MainActivity : AppCompatActivity() {
     // starts). The charging system lifts the battery above ~13.2 V; once the engine stops it falls back
     // below ~12.8 V. Two readings in a row, hysteresis in between. Thresholds are a first guess: every
     // transition is logged with its voltage ([PKE] engine ON/OFF) so they can be tuned from real rides.
-    private var engineRunning: Boolean? = null
-    private var engineHi = 0
-    private var engineLo = 0
-
-    private fun updateEngine(v: Float) {
-        if (v >= ENGINE_ON_V) { engineHi++; engineLo = 0 }
-        else if (v <= ENGINE_OFF_V) { engineLo++; engineHi = 0 }
-        else { engineHi = 0; engineLo = 0 }
-        val before = engineRunning
-        // Manel (22 Oct): the voltage showed the start at once but "motor en marcha" lagged a read (15 s).
-        // A charging voltage can't come from a parked bike: one reading turns it ON. Going OFF still
-        // takes two in a row (a load dip mustn't flicker it) — one is enough while it's still unknown.
-        if (engineHi >= 1) engineRunning = true
-        if (engineLo >= 2 || (engineLo >= 1 && engineRunning == null)) engineRunning = false
-        if (engineRunning != before) {
-            LogBus.log("[PKE] engine ${if (engineRunning == true) "ON" else "OFF"} at ${"%.1f".format(v)} V")
-            renderStatus(ConnectionState.phase, ConnectionState.detail)
-        }
-    }
-
-    /** True / false once known from a reading under 3 min old, else null. */
-    private fun engineState(): Boolean? {
-        val r = PkeBattery.last(this) ?: return null
-        return if (System.currentTimeMillis() - r.atMs <= 3 * 60_000L) engineRunning else null
-    }
+    /** True / false once known from a voltage read under 3 min ago, else null. State lives in [PkeBattery]. */
+    private fun engineState(): Boolean? = PkeBattery.engineState(this)
 
     private fun pkeRefresh() {
         if (PkeBattery.code(this).length < 8) { renderPkeCard(); return }
         // Don't compete with the connect flow for the radio.
-        if (pkeBusy || ConnectionState.phase.busy) { renderPkeCard(); return }
+        if (pkeBusy || liveOn || PkeUnlock.holdingBox || ConnectionState.phase.busy) { renderPkeCard(); return }
         pkeBusy = true
         val app = applicationContext
         Thread({
@@ -1621,13 +1614,124 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 pkeBusy = false
                 if (res?.reading != null) pkeFails = 0 else pkeFails++
-                res?.reading?.volts?.let { updateEngine(it) }
                 renderPkeCard()
             }
         }, "pke-card").start()
     }
 
+
+    // ── v2.4: live voltage while projecting. One BLE link kept open, 008 every 2 s and 001,7 every 10 s
+    // (read only, same two queries). Runs only while the app is in front AND streaming/mirroring; if
+    // the box won't keep the link (3 sessions without a single answer) it gives up for 5 min and the
+    // normal 15 s reads carry on. Every minute it logs reads / average latency / drops so we learn what
+    // the box and the Bluetooth–Wi‑Fi coexistence really do.
+    @Volatile private var liveOn = false
+    @Volatile private var resumedNow = false
+    private var liveGaveUpAt = 0L
+
+    private fun liveShouldRun() = resumedNow && ConnectionState.phase.let { it == Phase.STREAMING || it == Phase.MIRRORING }
+
+    private fun maybeStartLive() {
+        if (liveOn || PkeUnlock.holdingBox || !liveShouldRun() || PkeBattery.code(this).length < 8) return
+        if (liveGaveUpAt != 0L && android.os.SystemClock.elapsedRealtime() - liveGaveUpAt < 5 * 60_000L) return
+        liveOn = true
+        val app = applicationContext
+        Thread({
+            var emptySessions = 0
+            try {
+                // Let a read in flight (15 s ticker) finish first: the box takes one client at a time.
+                var w = 0
+                while (pkeBusy && w++ < 40) Thread.sleep(500)
+                while (liveShouldRun()) {
+                    // A command (menu, card or widget) holds the box: wait it out, don't fight it for the link.
+                    while (liveShouldRun() && PkeUnlock.holdingBox) Thread.sleep(500)
+                    if (!liveShouldRun()) break
+                    val live = PkeBattery.openLive(app)
+                    if (live == null) {
+                        if (++emptySessions >= 3) break
+                        Thread.sleep(6_000); continue
+                    }
+                    var n = 0; var miss = 0; var tick = 0
+                    var sumMs = 0L; var maxMs = 0L
+                    var statAt = android.os.SystemClock.elapsedRealtime()
+                    val t0 = statAt
+                    while (liveShouldRun() && !PkeUnlock.holdingBox && live.alive && miss < 3) {
+                        val t = android.os.SystemClock.elapsedRealtime()
+                        val v = live.volts()
+                        val took = android.os.SystemClock.elapsedRealtime() - t
+                        if (v != null) {
+                            miss = 0; n++; sumMs += took; if (took > maxMs) maxMs = took
+                            runOnUiThread { pkeFails = 0; renderPkeCard() }
+                        } else miss++
+                        if (++tick % 5 == 0 && live.alive && !PkeUnlock.holdingBox) {
+                            val before = PkeBattery.last(app)?.locked
+                            val l = live.locked()
+                            if (l != null && l != before) runOnUiThread { renderPkeCard() }
+                        }
+                        val now = android.os.SystemClock.elapsedRealtime()
+                        if (now - statAt >= 60_000L) {
+                            statAt = now
+                            LogBus.log("[PKE] live: $n reads in ${(now - t0) / 1000} s, avg ${if (n > 0) sumMs / n else 0} ms, max $maxMs ms, misses $miss")
+                        }
+                        val rest = 2_000L - (android.os.SystemClock.elapsedRealtime() - t)
+                        PkeBattery.livePause(rest) { PkeUnlock.holdingBox }
+                    }
+                    val handedOver = PkeUnlock.holdingBox && live.alive
+                    live.close()
+                    LogBus.log("[PKE] live: link closed after $n reads in ${(android.os.SystemClock.elapsedRealtime() - t0) / 1000} s" +
+                        (if (handedOver) " (handed the box to an action)" else if (!live.alive) " (the box dropped it)" else if (miss >= 3) " (3 unanswered queries)" else ""))
+                    if (handedOver) continue
+                    if (n == 0) { if (++emptySessions >= 3) break } else emptySessions = 0
+                    if (liveShouldRun()) Thread.sleep(3_000)
+                }
+                if (emptySessions >= 3) {
+                    liveGaveUpAt = android.os.SystemClock.elapsedRealtime()
+                    LogBus.log("[PKE] live mode not possible with this box/link — back to 15 s reads for 5 min")
+                }
+            } catch (_: InterruptedException) {
+            } catch (e: Exception) { LogBus.log("[PKE] live error: $e")
+            } finally { liveOn = false }
+        }, "pke-live").start()
+    }
+
+    /** Unlock / lock / seat / fuel-cap buttons: only once the PKE code and a valid McuID are set. */
+    private fun renderPkeActions() {
+        val card = findViewById<View?>(R.id.pke_actions_card) ?: return
+        val ready = PkeBattery.code(this).length >= 8 && PkeUnlock.isValidMcuId(PkeUnlock.mcuId(this))
+        card.visibility = if (ready) View.VISIBLE else View.GONE
+        if (!ready) return
+        val dp = resources.displayMetrics.density
+        fun bind(id: Int, icon: Int, accent: Int, label: Int, action: PkeUnlock.Action) {
+            findViewById<TextView>(id).apply {
+                // Tinted circle + line icon on top, label below — same look as the home tiles and the widget.
+                val circle = (ContextCompat.getDrawable(this@MainActivity, icon)!!.mutate()).apply { setTint(accent) }
+                val size = (34 * dp).toInt()
+                val inset = (8 * dp).toInt()
+                val bubble = android.graphics.drawable.LayerDrawable(arrayOf(
+                    android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.OVAL
+                        setColor((accent and 0x00FFFFFF) or 0x33000000)
+                    },
+                    circle,
+                )).apply {
+                    setLayerInset(1, inset, inset, inset, inset)
+                    setBounds(0, 0, size, size)
+                }
+                setCompoundDrawables(null, bubble, null, null)
+                compoundDrawablePadding = (4 * dp).toInt()
+                text = getString(label)
+                setOnClickListener { PkeUnlockUi.quick(this@MainActivity, action) { pkeRefresh() } }
+            }
+        }
+        bind(R.id.pke_act_unlock, R.drawable.ic_line_unlock, 0xFF5FD07A.toInt(), R.string.pke_short_unlock, PkeUnlock.Action.UNLOCK)
+        bind(R.id.pke_act_lock, R.drawable.ic_line_lock, 0xFF5B8DEF.toInt(), R.string.pke_short_lock, PkeUnlock.Action.LOCK)
+        bind(R.id.pke_act_seat, R.drawable.ic_line_seat, 0xFF4FB6A6.toInt(), R.string.pke_short_seat, PkeUnlock.Action.CUSHION)
+        bind(R.id.pke_act_fuel, R.drawable.ic_line_fuel, 0xFFE5774E.toInt(), R.string.pke_short_fuel, PkeUnlock.Action.OILBOX)
+    }
+
     private fun renderPkeCard() {
+        renderPkeActions()
+        try { ControlWidget.onReading(applicationContext) } catch (_: Exception) {}
         val card = findViewById<View?>(R.id.pke_card) ?: return
         val r = if (PkeBattery.code(this).length >= 8) PkeBattery.last(this) else null
         val now = System.currentTimeMillis()
@@ -1770,6 +1874,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Update the big status header + Connect button label from a [ConnectionState] transition. */
     private fun renderStatus(phase: Phase, detail: String) {
+        maybeStartLive()
         statusView.text = getString(phase.labelRes) +
             (if (ClockLab.resyncInProgress() && phase != Phase.STOPPED && phase != Phase.IDLE)
                 " · " + getString(R.string.clock_resyncing) else "") +
@@ -1778,7 +1883,7 @@ class MainActivity : AppCompatActivity() {
         bikeView.text = if (detail.isNotBlank()) detail else bikeLabelText()
         if (phase == Phase.ERROR && detail.isNotBlank() && !isHusConnectNoise(detail)) {
             try {
-                AnonymousTelemetry.reportError(this, detail)
+                AnonymousTelemetry.reportError(this, detail, oncePerDay = true)
             } catch (_: Exception) {
             }
         }
@@ -1972,6 +2077,10 @@ class MainActivity : AppCompatActivity() {
      * Uses applicationContext + the process-global prober (not this activity) so the hand-off
      * completes even if the activity is destroyed/recreated after it was armed.
      */
+    /** T350X-style dashes: switch from the SoftAP request to Wi‑Fi Direct once per connect. */
+    private val p2pFallbackDone = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var p2pFallback: (String) -> Unit = {}
+
     private fun joinWifi(qr: QrData, gateOnAaSteady: Boolean) {
         if (!WifiGate.ensureEnabledOrPrompt(this)) return
         ConnectionState.set(Phase.JOINING_WIFI)
@@ -2019,7 +2128,8 @@ class MainActivity : AppCompatActivity() {
             // (Voge-5G / ZT5G…). Prefer SoftAP immediately, MAC or not: the Zontes T350X (QR
             // action=8 + ssid ZT5G… + pwd + mac, 20 Oct 2026) never formed a P2P group, then joined
             // its SoftAP in 3 s.
-            if (!isDirect && qr.pwd.isNotEmpty()) {
+            // Once Wi‑Fi Direct has worked for this dash, go straight there next time.
+            if (!isDirect && qr.pwd.isNotEmpty() && remembered != "P2P") {
                 log(
                     "→ QR says P2P-only; SSID '${qr.ssid}' is not DIRECT-* and has a password — " +
                         "joining SoftAP first (skip Wi‑Fi Direct)",
@@ -2041,11 +2151,41 @@ class MainActivity : AppCompatActivity() {
         val p2pGroupAsAp = qr.supportsP2p && !qr.supportsAp && qr.pwd.isNotEmpty() &&
             !qr.ssid.startsWith("DIRECT-", ignoreCase = true)
         if (p2pGroupAsAp) P2pWarmUp.start(applicationContext, qr, LogBus::log)
+        // Zontes T350X on a Samsung A56 / Android 16 (Inky, 21 Oct 2026): the dash was in the scan cache at
+        // -40 dBm yet the "hidden SSID" request never matched it (picker: "no device found"), 90 s at a
+        // time. When the scan cache has it, ask for that exact access point as a normal visible network.
+        @Suppress("DEPRECATION")
+        val knownAp = if (p2pGroupAsAp) {
+            P2pWarmUp.matchingScanResults(applicationContext, qr.ssid, null).firstOrNull()?.BSSID
+        } else null
+        if (p2pGroupAsAp) {
+            LogBus.log(
+                if (knownAp != null) "→ T350X-style dash: '${qr.ssid}' is in the scan cache — asking for that exact access point ($knownAp)"
+                else "→ T350X-style dash: '${qr.ssid}' not in the scan cache yet — probing by name",
+            )
+            // If the SoftAP request has not produced a network after 30 s, try Wi‑Fi Direct by the QR address.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                if (BikeWifi.isActive && BikeWifi.currentNetwork == null && !BikeWifiP2p.isConnected) {
+                    p2pFallback("SoftAP request produced no network in 30 s")
+                }
+            }, 30_000L)
+        }
+        p2pFallbackDone.set(false)
+        p2pFallback = { why ->
+            if (p2pFallbackDone.compareAndSet(false, true)) {
+                LogBus.log("→ $why — trying Wi‑Fi Direct by the QR address")
+                BikeWifi.leave(applicationContext, LogBus::log)
+                P2pWarmUp.stop("handing over to Wi‑Fi Direct")
+                joinWifiP2p(qr, gateOnAaSteady)
+            }
+        }
         BikeWifi.reuseOrJoin(
             context = applicationContext,
             ssid = qr.ssid,
             psk = qr.pwd,
-            hidden = p2pGroupAsAp,
+            hidden = p2pGroupAsAp && knownAp == null,
+            bssid = knownAp,
+            onFirstJoinFailed = if (p2pGroupAsAp) ({ p2pFallback("the phone refused the dash's access point") }) else null,
             onAvailable = { network ->
                 WifiGate.cancelNotification(applicationContext)
                 P2pWarmUp.stop("bike Wi‑Fi joined")
@@ -2511,6 +2651,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun stopEverything() {
+        DashboardMode.reset()
         log("→ stopping everything (Android Auto + bike)")
         try { AaVideoBridge.onSteadyVideo = null } catch (_: Exception) {}
         try { AndroidAutoService.stop(this) } catch (e: Exception) { log("AA stop: $e") }
@@ -2831,8 +2972,6 @@ class MainActivity : AppCompatActivity() {
         const val EXTRA_START_GPX = "start_gpx"
         const val EXTRA_BT_TRIGGER = "bt_trigger"
         const val EXTRA_WIDGET_CONNECT = "widget_connect"
-        private const val ENGINE_ON_V = 13.2f
-        private const val ENGINE_OFF_V = 12.8f
         private const val CANCEL_LOCK_MS = 3_000L
         @Volatile private var connectStartedAt = 0L
         /** From "Fit to dash": restart Android Auto so a new panel shape takes effect. */
