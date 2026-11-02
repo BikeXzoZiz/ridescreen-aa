@@ -113,7 +113,7 @@ object CrashDetector : SensorEventListener {
         prefs(ctx).edit().putString("contacts", a.toString()).apply()
     }
 
-    val smsSupported: Boolean get() = BuildConfig.STORE == "github"
+    val smsSupported: Boolean get() = BuildConfig.STORE == "github" || BuildConfig.STORE == "pre"
 
     fun canSms(ctx: Context) = smsSupported &&
         ContextCompat.checkSelfPermission(ctx, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED

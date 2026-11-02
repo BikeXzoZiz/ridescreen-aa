@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-release build: same crash SMS as the GitHub build — it's the fork's daily-driver test app.
+     Google Play forbids SEND_SMS for apps that aren't the default SMS handler, so the Play build
+     alarms only. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.SEND_SMS" />
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+</manifest>

@@ -85,6 +85,22 @@ android {
             buildConfigField("boolean", "SELF_UPDATE", "false")
             buildConfigField("boolean", "EXTERNAL_DONATIONS", "false")
         }
+        //  pre    — fork pre-release: installs ALONGSIDE the upstream app (own applicationId, own
+        //           launcher name) so a pre-release can be tested without uninstalling the release
+        //           signed by another key. Self-update is off: it pulls upstream APKs, which can
+        //           never replace this package (different id and signature).
+        create("pre") {
+            dimension = "store"
+            applicationIdSuffix = ".pre"
+            buildConfigField("String", "STORE", "\"pre\"")
+            buildConfigField("boolean", "SELF_UPDATE", "false")
+            buildConfigField("boolean", "EXTERNAL_DONATIONS", "true")
+            if (slimApk || abiFilter.isNotEmpty()) {
+                ndk {
+                    abiFilters += listOf(abiFilter.ifEmpty { "arm64-v8a" })
+                }
+            }
+        }
     }
 
     signingConfigs {

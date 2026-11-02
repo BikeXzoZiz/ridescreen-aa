@@ -32,6 +32,11 @@ android {
             dimension = "store"
             applicationId = "io.github.mgb1982.ridescreen"
         }
+        // Matches the :app pre flavor so the watch companion keeps pairing with the phone build.
+        create("pre") {
+            dimension = "store"
+            applicationIdSuffix = ".pre"
+        }
     }
 
     signingConfigs {

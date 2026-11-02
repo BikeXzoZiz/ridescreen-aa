@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Overrides the launcher/label app name so the fork's pre-release installs visibly next to the
+     upstream app instead of looking like a duplicate. -->
+<resources>
+    <string name="app_name">RideScreen AA Pre</string>
+</resources>
