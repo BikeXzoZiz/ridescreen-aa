@@ -90,25 +90,35 @@ object NavLauncher {
 
     /**
      * Google Maps turn-by-turn intents for a destination, in the vehicle profile picked on the
-     * 🏍/🚗 chip ([NavMode]): two_wheeler / mode=l for motorcycle, driving / mode=d for car.
+     * 🤖/🏍/🚗 chip ([NavMode]): two_wheeler / mode=l for motorcycle, driving / mode=d for car.
+     * In [NavMode.AUTO] the links carry no travel mode, so Maps uses the phone's own mode and
+     * whatever navigation it starts (car or motorcycle) is projected to the dash.
      * [q] feeds the HTTPS dir link and google.navigation (already URI-encoded or bare coords);
      * [geoQuery] is the geo: fallback's coordinate+query part. Also used directly by
      * FuelActivity, which builds its own start loop.
      */
     fun mapsIntents(context: Context, q: String, geoQuery: String): List<Intent> {
-        val moto = NavMode.current(context) == NavMode.MOTO
-        val travelmode = if (moto) "two_wheeler" else "driving"
-        val gnavMode = if (moto) "l" else "d"
+        val mode = NavMode.current(context)
+        val travelmode = when (mode) {
+            NavMode.MOTO -> "&travelmode=two_wheeler"
+            NavMode.CAR -> "&travelmode=driving"
+            else -> "" // AUTO: let Maps keep the phone's own mode.
+        }
+        val gnavMode = when (mode) {
+            NavMode.MOTO -> "&mode=l"
+            NavMode.CAR -> "&mode=d"
+            else -> "" // AUTO: google.navigation falls back to the last-used mode.
+        }
         return listOf(
             // Phone + AA: directions UI on the phone, navigate action also feeds Android Auto.
             Intent(
                 Intent.ACTION_VIEW,
                 Uri.parse(
                     "https://www.google.com/maps/dir/?api=1&destination=$q" +
-                        "&travelmode=$travelmode&dir_action=navigate",
+                        "$travelmode&dir_action=navigate",
                 ),
             ).setPackage(MAPS_PKG),
-            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q&mode=$gnavMode"))
+            Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q$gnavMode"))
                 .setPackage(MAPS_PKG),
             Intent(Intent.ACTION_VIEW, Uri.parse("geo:$geoQuery")).setPackage(MAPS_PKG),
             Intent(Intent.ACTION_VIEW, Uri.parse("google.navigation:q=$q")),

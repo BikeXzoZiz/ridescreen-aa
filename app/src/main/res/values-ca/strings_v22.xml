@@ -157,6 +157,7 @@
     <string name="nav_app_remember">Recorda la meva elecció</string>
     <string name="nav_mode_moto">Mode motocicleta</string>
     <string name="nav_mode_car">Mode cotxe</string>
+    <string name="nav_mode_auto">Automàtic</string>
     <string name="nav_update_maps">Actualitza Google Maps</string>
     <string name="crash_sms_speed">Impacte a uns %1$d km/h.</string>
     <string name="bb_title">🎥 Caixa negra</string>

@@ -156,6 +156,7 @@
     <string name="nav_app_remember">Ricorda la mia scelta</string>
     <string name="nav_mode_moto">Modalità moto</string>
     <string name="nav_mode_car">Modalità auto</string>
+    <string name="nav_mode_auto">Automatico</string>
     <string name="nav_update_maps">Aggiorna Google Maps</string>
     <string name="crash_sms_speed">Urto a circa %1$d km/h.</string>
     <string name="bb_title">🎥 Scatola nera</string>

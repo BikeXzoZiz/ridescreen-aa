@@ -157,6 +157,7 @@
     <string name="nav_app_remember">Remember my choice</string>
     <string name="nav_mode_moto">Motorcycle mode</string>
     <string name="nav_mode_car">Car mode</string>
+    <string name="nav_mode_auto">Auto</string>
     <string name="nav_update_maps">Update Google Maps</string>
     <string name="crash_sms_speed">Impact at about %1$d km/h.</string>
     <string name="bb_title">🎥 Black box</string>
